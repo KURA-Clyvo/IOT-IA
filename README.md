@@ -435,10 +435,10 @@ Dashboard: `http://localhost:1880/ui`
 | Nome | RM | Responsabilidade |
 |------|----|-----------------|
 | Felipe Ferrete | — | Tech Lead · Firmware ESP32 · Node-RED · Arquitetura IoT |
-| [Integrante 2] | — | [Responsabilidade] |
-| [Integrante 3] | — | [Responsabilidade] |
-| [Integrante 4] | — | [Responsabilidade] |
-| [Integrante 5] | — | [Responsabilidade] |
+| Nikolas Brisola | — | Dev · Refatoração de código, tratamento de exceções e correção de bugs |
+| Gustavo Bosak | — | QA Engineer · Validação dos cenários ANVISA e garantia de qualidade  |
+| Guilherme Sola | — | Product & Integration Reviewer · Validação cruzada de requisitos e consistência do fluxo IoT com o ecossistema KURA |
+| Clayton Alves | — | Systems Verification Analyst · Revisão de arquitetura ponta a ponta, auditoria de payloads e homologação da entrega |
 
 **Turma:** 2TDS — Fevereiro · **Curso:** Análise e Desenvolvimento de Sistemas  
 **Período:** 1º Semestre 2026 · **Entrega Sprint 1 e 2:** 24/05/2025
