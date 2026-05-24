@@ -33,8 +33,8 @@
 // =============================================================================
 
 // Wi-Fi
-const char* WIFI_SSID     = "SEU_SSID";
-const char* WIFI_PASSWORD = "SUA_SENHA";
+const char* WIFI_SSID     = "Wokwi-GUEST";
+const char* WIFI_PASSWORD = "";
 
 // MQTT — HiveMQ Cloud ou Mosquitto local
 const char* MQTT_BROKER   = "broker.hivemq.com";

@@ -1,0 +1,556 @@
+[
+    {
+        "id": "c0273cacb76c2b07",
+        "type": "tab",
+        "label": "KURA — Câmara Fria IoT",
+        "disabled": false,
+        "info": "Pipeline: ESP32 → MQTT → Funde com OpenWeather → MySQL (LEITURA_TEMPERATURA + ALERTA_TEMPERATURA) → Dashboard"
+    },
+    {
+        "id": "8c397d41281f1597",
+        "type": "mqtt in",
+        "z": "c0273cacb76c2b07",
+        "name": "📡 ESP32 Telemetria",
+        "topic": "kura/clinica01/camarafria/telemetria",
+        "qos": "1",
+        "datatype": "json",
+        "broker": "65327eb3022fdc12",
+        "inputs": 0,
+        "x": 120,
+        "y": 80,
+        "wires": [
+            [
+                "750f1954cde55634"
+            ]
+        ]
+    },
+    {
+        "id": "750f1954cde55634",
+        "type": "function",
+        "z": "c0273cacb76c2b07",
+        "name": "Guarda payload ESP32",
+        "func": "// Salva o payload do ESP32 no contexto do fluxo\n// para ser combinado com o clima no próximo passo\nflow.set('esp32_payload', msg.payload);\nreturn msg;",
+        "outputs": 1,
+        "x": 330,
+        "y": 80,
+        "wires": [
+            [
+                "5867849869ddbb4a"
+            ]
+        ]
+    },
+    {
+        "id": "5867849869ddbb4a",
+        "type": "http request",
+        "z": "c0273cacb76c2b07",
+        "name": "🌤️ OpenWeather API",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://api.openweathermap.org/data/2.5/weather?q=Sao+Paulo,BR&appid=eaf73f155d8c5eb66e49073923521337&units=metric&lang=pt_br",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 560,
+        "y": 120,
+        "wires": [
+            [
+                "2bba777f4baa4f06"
+            ]
+        ]
+    },
+    {
+        "id": "2bba777f4baa4f06",
+        "type": "function",
+        "z": "c0273cacb76c2b07",
+        "name": "Funde ESP32 + Clima",
+        "func": "// Verifica se a mensagem veio da API OpenWeather (contém a propriedade main)\nif (msg.payload && msg.payload.main) {\n    flow.set('clima_payload', msg.payload);\n}\n\n// Recupera o último dado salvo de cada um deles\nconst esp32 = flow.get('esp32_payload') || msg.payload;\nconst clima = flow.get('clima_payload') || null;\n\n// Se ainda não recebeu telemetria do ESP32, não prossegue\nif (!esp32 || esp32.temperatura === undefined) {\n    return null;\n}\n\nmsg.payload = { esp32, clima };\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 760,
+        "y": 80,
+        "wires": [
+            [
+                "c0978b1cf2a57b5d"
+            ]
+        ]
+    },
+    {
+        "id": "c0978b1cf2a57b5d",
+        "type": "function",
+        "z": "c0273cacb76c2b07",
+        "name": "⚙️ Processa Telemetria + Clima",
+        "func": "// ============================================================================\n//   KURA IoT — Node-RED: Nó Function Principal\n//   Nome sugerido: \"Processa Telemetria + Clima\"\n// ============================================================================\n\n// --- 1. VALIDAÇÃO DE ENTRADA ---\nconst esp32 = msg.payload.esp32;\nconst clima = msg.payload.clima;\n\nif (!esp32 || esp32.temperatura === undefined) {\n    node.warn(\"[KURA] Payload do ESP32 inválido ou ausente. Abortando.\");\n    return null; // descarta a mensagem — não grava dado ruim no banco\n}\n\n// --- 2. EXTRAÇÃO DOS DADOS DO ESP32 ---\nconst idDispositivo = esp32.id_dispositivo || 1;  // FK → DISPOSITIVO_IOT\nconst temperatura = parseFloat(esp32.temperatura);\nconst umidade = parseFloat(esp32.umidade);\nconst ldrADC = parseInt(esp32.ldr_adc);\nconst portaAberta = Boolean(esp32.porta_aberta);\n\n// --- 3. REGRA DE NEGÓCIO: ANVISA RDC 197/2017 ---\nconst TEMP_MIN = 2.0;\nconst TEMP_MAX = 8.0;\n\nconst dentroFaixa = (temperatura >= TEMP_MIN && temperatura <= TEMP_MAX);\nconst stDentroFaixa = dentroFaixa ? 'S' : 'N';\n\n// --- 4. OBSERVAÇÃO: Alerta de Porta Aberta via LDR ---\nlet dsObservacao = null;\n\nif (portaAberta) {\n    dsObservacao = `ALERTA: Porta Aberta | LDR_ADC=${ldrADC}`;\n}\n\nif (!dentroFaixa) {\n    const desvio = temperatura < TEMP_MIN\n        ? (temperatura - TEMP_MIN).toFixed(1)  \n        : (temperatura - TEMP_MAX).toFixed(1); \n\n    const tipoDesvio = temperatura < TEMP_MIN ? \"ABAIXO_MINIMO\" : \"ACIMA_MAXIMO\";\n    const extra = `TEMP_FORA_FAIXA: ${tipoDesvio} | Desvio=${desvio}°C`;\n    dsObservacao = dsObservacao ? `${dsObservacao} | ${extra}` : extra;\n}\n\nif (dsObservacao && dsObservacao.length > 200) {\n    dsObservacao = dsObservacao.substring(0, 197) + \"...\";\n}\n\n// --- 5. EXTRAÇÃO DO CLIMA EXTERNO (OpenWeather) ---\nconst climaInfo = {};\nif (clima && clima.main) {\n    climaInfo.temp_ext = clima.main.temp;          // °C\n    climaInfo.umidade_ext = clima.main.humidity;     // %\n    climaInfo.descricao = clima.weather?.[0]?.description || 'N/A';\n    climaInfo.cidade = clima.name || 'São Paulo';\n    climaInfo.delta_temp = (temperatura - climaInfo.temp_ext).toFixed(1);\n}\n\n// ============================================================================\n// --- 6. PREPARAR QUERY: LEITURA_TEMPERATURA ---\n// ============================================================================\nconst queryLeitura = `\n    INSERT INTO LEITURA_TEMPERATURA\n        (ID_DISPOSITIVO, NR_TEMPERATURA, NR_UMIDADE, DT_LEITURA, ST_DENTRO_FAIXA, DS_OBSERVACAO)\n    VALUES\n        (?, ?, ?, NOW(), ?, ?)\n`;\n\nconst paramsLeitura = [\n    idDispositivo,          \n    temperatura,            \n    isNaN(umidade) ? null : umidade, \n    stDentroFaixa,          \n    dsObservacao            \n];\n\n// ============================================================================\n// --- 7. LÓGICA DE ALERTA: ALERTA_TEMPERATURA ---\n// ============================================================================\nlet queryAlerta = null;\nlet paramsAlerta = null;\n\nconst flowCtx = flow.get(\"alertaAtivo\") || { fora_faixa: false, porta_aberta: false };\nconst alertaAtivo = {\n    fora_faixa: !dentroFaixa,\n    porta_aberta: portaAberta\n};\nflow.set(\"alertaAtivo\", alertaAtivo);\n\nconst novoAlerteTemp = alertaAtivo.fora_faixa && !flowCtx.fora_faixa;\nconst novoAlertaPorta = alertaAtivo.porta_aberta && !flowCtx.porta_aberta;\n\nif (novoAlerteTemp || novoAlertaPorta) {\n\n    let tipoAlerta = novoAlerteTemp ? (temperatura > TEMP_MAX ? 'TEMP_ALTA' : 'TEMP_BAIXA') : 'TEMP_ALTA';\n    let severidade;\n\n    if (novoAlertaPorta && !novoAlerteTemp) {\n        severidade = 'MEDIA';\n    } else if (temperatura > 20 || temperatura < -2) {\n        severidade = 'CRITICA';\n    } else if (temperatura > 12 || temperatura < -2) {\n        severidade = 'ALTA';\n    } else if (temperatura > 10 || temperatura < 0) {\n        severidade = 'MEDIA';\n    } else {\n        severidade = 'BAIXA';\n    }\n\n    let mensagem = `[KURA IoT] Alerta na câmara fria. `;\n    if (novoAlerteTemp) {\n        mensagem += `Temperatura: ${temperatura}°C (Faixa ANVISA: ${TEMP_MIN}-${TEMP_MAX}°C). `;\n    }\n    if (novoAlertaPorta) {\n        mensagem += `Porta da câmara detectada aberta (LDR_ADC=${ldrADC}). `;\n    }\n    if (climaInfo.temp_ext !== undefined) {\n        mensagem += `Temp. externa: ${climaInfo.temp_ext}°C (${climaInfo.descricao}).`;\n    }\n\n    mensagem = mensagem.substring(0, 500);\n\n    queryAlerta = `\n        INSERT INTO ALERTA_TEMPERATURA\n            (ID_DISPOSITIVO, DS_TIPO_ALERTA, DS_SEVERIDADE, NR_TEMP_REGISTRADA, DT_INICIO, DS_MENSAGEM, ST_RESOLVIDO)\n        VALUES\n            (?, ?, ?, ?, NOW(), ?, 'N')\n    `;\n\n    paramsAlerta = [\n        idDispositivo,   \n        tipoAlerta,      \n        severidade,      \n        temperatura,     \n        mensagem         \n    ];\n}\n\n// ============================================================================\n// --- 8. DADOS PARA O DASHBOARD (CORREÇÃO DE COMPATIBILIDADE AQUI) ---\n// ============================================================================\nconst dadosDashboard = {\n    temperatura: temperatura,\n    umidade: umidade,\n    ldr_adc: ldrADC,\n    porta_aberta: portaAberta,\n    dentro_faixa: dentroFaixa,\n    \n    // CORREÇÃO 1: Adicionado 'status' pois o seu nó Change (cdfb2fcc4263dc37) \n    // busca estritamente por \"payload.status\" para mandar pro texto do dashboard.\n    status: dentroFaixa && !portaAberta ? \"✅ NORMAL\" : \"⚠️ ALERTA\",\n    status_display: dentroFaixa && !portaAberta ? \"✅ NORMAL\" : \"⚠️ ALERTA\",\n    cor_gauge: dentroFaixa ? (portaAberta ? \"orange\" : \"green\") : \"red\",\n    \n    // CORREÇÃO 2: Renomeado de 'clima_externo' para 'clima' porque o seu nó \n    // de texto Clima Externo (87e169422c376802) busca por \"payload.clima.temp_ext\" e \"payload.clima.descricao\"\n    clima: climaInfo,\n    clima_externo: climaInfo, \n    \n    timestamp: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })\n};\n\n// ============================================================================\n// --- 9. SAÍDAS DO NÓ ---\n// ============================================================================\nconst msgLeitura = {\n    topic: queryLeitura,\n    payload: paramsLeitura\n};\n\nconst msgAlerta = queryAlerta ? { topic: queryAlerta, payload: paramsAlerta } : null;\n\nconst msgDash = { payload: dadosDashboard };\n\nreturn [msgLeitura, msgAlerta, msgDash];",
+        "outputs": 3,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1010,
+        "y": 80,
+        "wires": [
+            [
+                "cbb01e3faa369de2"
+            ],
+            [
+                "6797044d4a22e813"
+            ],
+            [
+                "87e169422c376802",
+                "36b4162e3e41b576",
+                "4dc50541665cc211",
+                "a2e41c000df7fb8c",
+                "622245587cf81650"
+            ]
+        ],
+        "outputLabels": [
+            "INSERT leitura",
+            "INSERT alerta (condicional)",
+            "Dashboard"
+        ]
+    },
+    {
+        "id": "cbb01e3faa369de2",
+        "type": "mysql",
+        "z": "c0273cacb76c2b07",
+        "mydb": "09608625ba536161",
+        "name": "DB: LEITURA_TEMPERATURA",
+        "x": 1330,
+        "y": 40,
+        "wires": [
+            [
+                "abb6aa061eb2a6a6"
+            ]
+        ]
+    },
+    {
+        "id": "abb6aa061eb2a6a6",
+        "type": "debug",
+        "z": "c0273cacb76c2b07",
+        "name": "Debug INSERT Leitura",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1600,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "6797044d4a22e813",
+        "type": "mysql",
+        "z": "c0273cacb76c2b07",
+        "mydb": "09608625ba536161",
+        "name": "DB: ALERTA_TEMPERATURA",
+        "x": 1330,
+        "y": 100,
+        "wires": [
+            [
+                "dcd9fb556fcc7c79"
+            ]
+        ]
+    },
+    {
+        "id": "dcd9fb556fcc7c79",
+        "type": "debug",
+        "z": "c0273cacb76c2b07",
+        "name": "Debug INSERT Alerta",
+        "active": true,
+        "tosidebar": true,
+        "complete": "true",
+        "x": 1620,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "34e6aebbb505e3c6",
+        "type": "ui_gauge",
+        "z": "c0273cacb76c2b07",
+        "name": "Gauge Temperatura",
+        "group": "75d16a68926ca61f",
+        "order": 1,
+        "width": 4,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Temperatura Câmara",
+        "label": "°C",
+        "format": "{{value}}",
+        "min": -5,
+        "max": 30,
+        "colors": [
+            "#00b4d8",
+            "#2dc653",
+            "#e63946"
+        ],
+        "seg1": "2",
+        "seg2": "8",
+        "diff": false,
+        "className": "",
+        "x": 1500,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "5d1e3f3a26b988bc",
+        "type": "ui_gauge",
+        "z": "c0273cacb76c2b07",
+        "name": "Gauge Umidade",
+        "group": "75d16a68926ca61f",
+        "order": 2,
+        "width": 4,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Umidade Relativa",
+        "label": "%",
+        "format": "{{value}}",
+        "min": 0,
+        "max": 100,
+        "colors": [
+            "#e63946",
+            "#2dc653",
+            "#00b4d8"
+        ],
+        "seg1": "40",
+        "seg2": "70",
+        "diff": false,
+        "className": "",
+        "x": 1480,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "63f21a30fd06624d",
+        "type": "ui_chart",
+        "z": "c0273cacb76c2b07",
+        "name": "Chart Histórico Temperatura",
+        "group": "75d16a68926ca61f",
+        "order": 3,
+        "width": 12,
+        "height": 5,
+        "label": "Histórico Temperatura (°C) — Faixa ANVISA: 2 a 8°C",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "Aguardando dados do sensor...",
+        "dot": true,
+        "ymin": "-5",
+        "ymax": "30",
+        "removeOlder": "1",
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": "",
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#aec7e8",
+            "#ff7f0e",
+            "#2ca02c",
+            "#98df8a",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1520,
+        "y": 280,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "622245587cf81650",
+        "type": "ui_text",
+        "z": "c0273cacb76c2b07",
+        "group": "75d16a68926ca61f",
+        "order": 4,
+        "width": 6,
+        "height": 1,
+        "name": "Status Geral",
+        "label": "Status",
+        "format": "{{msg.payload.status}}",
+        "layout": "",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 1250,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "87e169422c376802",
+        "type": "ui_text",
+        "z": "c0273cacb76c2b07",
+        "group": "75d16a68926ca61f",
+        "order": 5,
+        "width": 6,
+        "height": 1,
+        "name": "Clima Externo",
+        "label": "Clima SP (OpenWeather)",
+        "format": "{{msg.payload.clima.temp_ext}}°C — {{msg.payload.clima.descricao}}",
+        "layout": "",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 1260,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "f38f26a388e77988",
+        "type": "mqtt in",
+        "z": "c0273cacb76c2b07",
+        "name": "📡 Status Dispositivo (LWT)",
+        "topic": "kura/clinica01/camarafria/status",
+        "qos": "1",
+        "datatype": "json",
+        "broker": "65327eb3022fdc12",
+        "inputs": 0,
+        "x": 120,
+        "y": 260,
+        "wires": [
+            [
+                "c8a476b6a0ce54cd"
+            ]
+        ]
+    },
+    {
+        "id": "c8a476b6a0ce54cd",
+        "type": "function",
+        "z": "c0273cacb76c2b07",
+        "name": "Verifica Offline (LWT)",
+        "func": "// Quando o ESP32 cai abruptamente, o broker publica o LWT\n// com status='offline'. Geramos um alerta SENSOR_OFFLINE no banco.\nconst status = msg.payload;\nif (status && status.status === 'offline') {\n    msg.topic = 'INSERT INTO ALERTA_TEMPERATURA (ID_DISPOSITIVO,DS_TIPO_ALERTA,DS_SEVERIDADE,NR_TEMP_REGISTRADA,DT_INICIO,DS_MENSAGEM,ST_RESOLVIDO) VALUES (?,?,?,NULL,NOW(),?,\\'N\\')';\n    msg.payload = [\n        1,                   // ID_DISPOSITIVO\n        'SENSOR_OFFLINE',    // DS_TIPO_ALERTA\n        'CRITICA',           // DS_SEVERIDADE\n        '[KURA IoT] Dispositivo ESP32 câmara fria ficou OFFLINE. Verificar conexão imediatamente.'\n    ];\n    return msg;\n}\nreturn null; // online: não faz nada",
+        "outputs": 1,
+        "x": 380,
+        "y": 260,
+        "wires": [
+            [
+                "7dd46805d6d36aa8"
+            ]
+        ]
+    },
+    {
+        "id": "7dd46805d6d36aa8",
+        "type": "mysql",
+        "z": "c0273cacb76c2b07",
+        "mydb": "09608625ba536161",
+        "name": "DB: Alerta SENSOR_OFFLINE",
+        "x": 620,
+        "y": 260,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "36b4162e3e41b576",
+        "type": "change",
+        "z": "c0273cacb76c2b07",
+        "name": "",
+        "rules": [
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "payload.temperatura",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 1270,
+        "y": 260,
+        "wires": [
+            [
+                "34e6aebbb505e3c6",
+                "63f21a30fd06624d"
+            ]
+        ]
+    },
+    {
+        "id": "4dc50541665cc211",
+        "type": "change",
+        "z": "c0273cacb76c2b07",
+        "name": "",
+        "rules": [
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "payload.umidade",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 1270,
+        "y": 180,
+        "wires": [
+            [
+                "5d1e3f3a26b988bc"
+            ]
+        ]
+    },
+    {
+        "id": "a221a7d335c0d1d6",
+        "type": "inject",
+        "z": "c0273cacb76c2b07",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 520,
+        "y": 200,
+        "wires": [
+            [
+                "5867849869ddbb4a"
+            ]
+        ]
+    },
+    {
+        "id": "a2e41c000df7fb8c",
+        "type": "change",
+        "z": "c0273cacb76c2b07",
+        "name": "Filtro LDR",
+        "rules": [
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "payload.ldr_adc",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 1240,
+        "y": 340,
+        "wires": [
+            [
+                "19809e70527d8f68"
+            ]
+        ]
+    },
+    {
+        "id": "19809e70527d8f68",
+        "type": "ui_gauge",
+        "z": "c0273cacb76c2b07",
+        "name": "Gauge Luminosidade",
+        "group": "75d16a68926ca61f",
+        "order": 2,
+        "width": 4,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Luminosidade (LDR)",
+        "label": "%",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "4095",
+        "colors": [
+            "#2dc653",
+            "#e63946",
+            "#e63946"
+        ],
+        "seg1": "1500",
+        "seg2": "",
+        "diff": false,
+        "className": "2305770",
+        "x": 1500,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "65327eb3022fdc12",
+        "type": "mqtt-broker",
+        "name": "HiveMQ (KURA)",
+        "broker": "broker.hivemq.com",
+        "port": "1883",
+        "clientid": "nodered_kura_server",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true
+    },
+    {
+        "id": "09608625ba536161",
+        "type": "MySQLdatabase",
+        "name": "kura_db",
+        "host": "127.0.0.1",
+        "port": "3306",
+        "db": "kura_db",
+        "tz": "America/Sao_Paulo",
+        "charset": ""
+    },
+    {
+        "id": "75d16a68926ca61f",
+        "type": "ui_group",
+        "name": "KURA — Câmara Fria de Vacinas",
+        "tab": "c9e72b06571f9389",
+        "order": 1,
+        "disp": true,
+        "width": "12",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "c9e72b06571f9389",
+        "type": "ui_tab",
+        "name": "KURA IoT",
+        "icon": "fa-thermometer-half",
+        "order": 1,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "e51ba2d9b1e6e63e",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-node-mysql": "3.0.0",
+            "node-red-dashboard": "3.6.6"
+        }
+    }
+]
