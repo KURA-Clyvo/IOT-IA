@@ -3,9 +3,9 @@
 > **Subsistema IoT do KURA** — plataforma SaaS B2B para gestão de clínicas veterinárias, desenvolvida em parceria com a **Clyvo Vet** para o **Challenge FIAP 2026**.
 
 [![FIAP Challenge 2026](https://img.shields.io/badge/FIAP-Challenge%202026-E63946?style=flat-square)](https://fiap.com.br)
-[![Parceiro](https://img.shields.io/badge/Parceiro-Clyvo%20Vet-2DC653?style=flat-square)](https://clyvo.com.br)
-[![ANVISA](https://img.shields.io/badge/Conformidade-ANVISA%20RDC%20197%2F2017-0077B6?style=flat-square)](#regra-de-negócio-anvisa)
-[![Disciplina](https://img.shields.io/badge/Disciplina-Disruptive%20Architectures%3A%20IoT-7B2D8B?style=flat-square)](#)
+![Parceiro](https://img.shields.io/badge/Parceiro-Clyvo%20Vet-2DC653?style=flat-square)
+[![Regra de negócio](https://img.shields.io/badge/Regra%20de%20neg%C3%B3cio-ANVISA%20RDC%20197%2F2017-0077B6?style=flat-square)](#regra-de-negócio-anvisa)
+![Disciplina](https://img.shields.io/badge/Disciplina-Disruptive%20Architectures%3A%20IoT-7B2D8B?style=flat-square)
 
 ---
 
